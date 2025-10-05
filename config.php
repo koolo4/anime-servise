@@ -258,6 +258,11 @@ function csrfTokenField() {
     return '<input type="hidden" name="csrf_token" value="' . generateCSRFToken() . '">';
 }
 
+// Алиас для обратной совместимости с profile.php
+function verifyCSRFToken($token) {
+    return validateCSRFToken($token);
+}
+
 // ================ СИСТЕМА БЛОКИРОВКИ ПОЛЬЗОВАТЕЛЕЙ ================
 
 // Настройки блокировки

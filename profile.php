@@ -9,6 +9,91 @@ if (!isLoggedIn()) {
 $currentUser = getCurrentUser();
 $pdo = getDB();
 
+// Обработка загрузки аватарки (только для собственного профиля)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_avatar']) && isset($_FILES['avatar'])) {
+    // Проверяем CSRF токен
+    if (!isset($_POST['csrf_token']) || !verifyCSRFToken($_POST['csrf_token'])) {
+        $avatarError = 'Ошибка безопасности. Попробуйте еще раз.';
+    } else {
+        $uploadFile = $_FILES['avatar'];
+
+        // Проверяем, что файл загружен без ошибок
+        if ($uploadFile['error'] === UPLOAD_ERR_OK) {
+            // Проверяем размер файла (максимум 5MB)
+            if ($uploadFile['size'] > 5 * 1024 * 1024) {
+                $avatarError = 'Файл слишком большой. Максимальный размер: 5MB.';
+            } else {
+                // Проверяем тип файла
+                $allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+                $finfo = finfo_open(FILEINFO_MIME_TYPE);
+                $mimeType = finfo_file($finfo, $uploadFile['tmp_name']);
+                finfo_close($finfo);
+
+                if (!in_array($mimeType, $allowedTypes)) {
+                    $avatarError = 'Недопустимый тип файла. Разрешены: JPEG, PNG, GIF, WebP.';
+                } else {
+                    // Создаем папку для аватаров, если её нет
+                    $avatarDir = 'uploads/avatars/';
+                    if (!is_dir($avatarDir)) {
+                        mkdir($avatarDir, 0755, true);
+                    }
+
+                    // Генерируем уникальное имя файла
+                    switch($mimeType) {
+                        case 'image/jpeg':
+                            $extension = 'jpg';
+                            break;
+                        case 'image/png':
+                            $extension = 'png';
+                            break;
+                        case 'image/gif':
+                            $extension = 'gif';
+                            break;
+                        case 'image/webp':
+                            $extension = 'webp';
+                            break;
+                        default:
+                            $extension = 'jpg';
+                            break;
+                    }
+
+                    $filename = 'avatar_' . $currentUser['id'] . '_' . time() . '.' . $extension;
+                    $avatarPath = $avatarDir . $filename;
+
+                    // Перемещаем загруженный файл
+                    if (move_uploaded_file($uploadFile['tmp_name'], $avatarPath)) {
+                        // Удаляем старый аватар, если он существует
+                        if ($currentUser['avatar'] && file_exists($currentUser['avatar'])) {
+                            unlink($currentUser['avatar']);
+                        }
+
+                        // Обновляем путь к аватару в базе данных
+                        $updateStmt = $pdo->prepare("UPDATE users SET avatar = ? WHERE id = ?");
+                        if ($updateStmt->execute([$avatarPath, $currentUser['id']])) {
+                            $avatarSuccess = 'Аватар успешно обновлен!';
+                            // Обновляем текущего пользователя
+                            $currentUser['avatar'] = $avatarPath;
+                        } else {
+                            $avatarError = 'Ошибка при сохранении в базе данных.';
+                            // Удаляем загруженный файл в случае ошибки
+                            unlink($avatarPath);
+                        }
+                    } else {
+                        $avatarError = 'Ошибка при загрузке файла.';
+                    }
+                }
+            }
+        } else {
+            $avatarError = match($uploadFile['error']) {
+                UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE => 'Файл слишком большой.',
+                UPLOAD_ERR_PARTIAL => 'Файл загружен частично.',
+                UPLOAD_ERR_NO_FILE => 'Файл не выбран.',
+                default => 'Ошибка при загрузке файла.'
+            };
+        }
+    }
+}
+
 // Определяем, чей профиль просматриваем
 $profileUserId = isset($_GET['user_id']) ? (int)$_GET['user_id'] : $currentUser['id'];
 $isOwnProfile = ($profileUserId === $currentUser['id']);
@@ -455,8 +540,335 @@ $userComments = $stmt->fetchAll(PDO::FETCH_ASSOC);
             background: rgba(255, 255, 255, 0.1);
         }
 
+        /* Стили для изменения аватарки */
+        .profile-avatar-large {
+            position: relative;
+        }
+
+        .avatar-change-btn {
+            position: absolute;
+            bottom: 5px;
+            right: 5px;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: var(--primary-gradient);
+            color: white;
+            border: 3px solid white;
+            font-size: 16px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        }
+
+        .avatar-change-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        [data-theme="dark"] .avatar-change-btn {
+            border-color: var(--bg-color);
+        }
+
+        /* Сообщения об аватарке */
+        .avatar-message {
+            margin-top: 10px;
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .avatar-message.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .avatar-message.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        [data-theme="dark"] .avatar-message.success {
+            background: rgba(40, 167, 69, 0.2);
+            color: #66bb6a;
+            border-color: rgba(40, 167, 69, 0.3);
+        }
+
+        [data-theme="dark"] .avatar-message.error {
+            background: rgba(220, 53, 69, 0.2);
+            color: #ef5350;
+            border-color: rgba(220, 53, 69, 0.3);
+        }
+
+        /* Модальное окно */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 10000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(5px);
+        }
+
+        .modal-content {
+            position: relative;
+            background-color: white;
+            margin: 5% auto;
+            padding: 0;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            width: 90%;
+            max-width: 600px;
+            max-height: 90vh;
+            overflow-y: auto;
+            animation: modalSlideIn 0.3s ease;
+        }
+
+        [data-theme="dark"] .modal-content {
+            background-color: var(--card-bg);
+            color: var(--text-color);
+        }
+
+        @keyframes modalSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-50px) scale(0.9);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 25px;
+            border-bottom: 2px solid #e9ecef;
+            background: var(--primary-gradient);
+            color: white;
+            border-radius: 15px 15px 0 0;
+        }
+
+        [data-theme="dark"] .modal-header {
+            border-bottom-color: var(--border-color);
+        }
+
+        .modal-header h3 {
+            margin: 0;
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 28px;
+            font-weight: bold;
+            color: white;
+            cursor: pointer;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            transition: all 0.3s ease;
+        }
+
+        .modal-close:hover {
+            background: rgba(255, 255, 255, 0.2);
+            transform: rotate(90deg);
+        }
+
+        .avatar-form {
+            padding: 25px;
+        }
+
+        .avatar-preview-section {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 25px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 12px;
+            border: 2px dashed #dee2e6;
+        }
+
+        [data-theme="dark"] .avatar-preview-section {
+            background: rgba(255, 255, 255, 0.05);
+            border-color: var(--border-color);
+        }
+
+        .current-avatar h4,
+        .new-avatar h4 {
+            margin: 0 0 15px 0;
+            font-size: 14px;
+            font-weight: 600;
+            text-align: center;
+            color: var(--text-secondary);
+        }
+
+        .avatar-preview-current,
+        .avatar-preview-new {
+            width: 120px;
+            height: 120px;
+            margin: 0 auto;
+            border-radius: 50%;
+            overflow: hidden;
+            border: 3px solid #dee2e6;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: white;
+        }
+
+        [data-theme="dark"] .avatar-preview-current,
+        [data-theme="dark"] .avatar-preview-new {
+            border-color: var(--border-color);
+            background: var(--bg-color);
+        }
+
+        .avatar-preview-current img,
+        .avatar-preview-new img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .avatar-placeholder {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--primary-gradient);
+            color: white;
+            font-size: 48px;
+            font-weight: bold;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+
+        .form-group input[type="file"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #dee2e6;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.3s ease;
+            background: white;
+        }
+
+        [data-theme="dark"] .form-group input[type="file"] {
+            background: var(--bg-color);
+            border-color: var(--border-color);
+            color: var(--text-color);
+        }
+
+        .form-group input[type="file"]:focus {
+            border-color: #667eea;
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .form-help {
+            display: block;
+            margin-top: 5px;
+            font-size: 12px;
+            color: var(--text-secondary);
+            line-height: 1.4;
+        }
+
+        .modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 15px;
+            padding-top: 20px;
+            border-top: 1px solid #dee2e6;
+            margin-top: 25px;
+        }
+
+        [data-theme="dark"] .modal-footer {
+            border-top-color: var(--border-color);
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 120px;
+        }
+
+        .btn-primary {
+            background: var(--primary-gradient);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #5a6268;
+            transform: translateY(-2px);
+        }
+
         /* Адаптивность для мобильных устройств */
         @media (max-width: 768px) {
+            .modal-content {
+                margin: 10% auto;
+                width: 95%;
+            }
+
+            .avatar-preview-section {
+                grid-template-columns: 1fr;
+                text-align: center;
+            }
+
+            .modal-footer {
+                flex-direction: column;
+            }
+
+            .btn {
+                width: 100%;
+            }
+
             .tabs-header {
                 flex-wrap: wrap;
             }
@@ -497,6 +909,12 @@ $userComments = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             .anime-card[draggable="true"] {
                 cursor: pointer;
+            }
+
+            .avatar-change-btn {
+                width: 35px;
+                height: 35px;
+                font-size: 14px;
             }
         }
     </style>
@@ -563,11 +981,26 @@ $userComments = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                 <?php echo strtoupper(substr($profileUser['username'], 0, 1)); ?>
                             </div>
                         <?php endif; ?>
+
+                        <?php if ($isOwnProfile): ?>
+                            <button type="button" class="avatar-change-btn" onclick="openAvatarModal()" title="Изменить аватар">
+                                📷
+                            </button>
+                        <?php endif; ?>
                     </div>
                     <div class="profile-info">
                         <h3><?php echo h($profileUser['username']); ?></h3>
                         <p class="profile-role"><?php echo $profileUser['role'] === 'admin' ? '👑 Администратор' : '👤 Пользователь'; ?></p>
                         <p class="profile-date">Регистрация: <?php echo formatDate($profileUser['created_at']); ?></p>
+
+                        <?php if ($isOwnProfile): ?>
+                            <?php if (isset($avatarSuccess)): ?>
+                                <div class="avatar-message success">✅ <?php echo h($avatarSuccess); ?></div>
+                            <?php endif; ?>
+                            <?php if (isset($avatarError)): ?>
+                                <div class="avatar-message error">❌ <?php echo h($avatarError); ?></div>
+                            <?php endif; ?>
+                        <?php endif; ?>
                     </div>
                 </div>
 
@@ -755,6 +1188,59 @@ $userComments = $stmt->fetchAll(PDO::FETCH_ASSOC);
             </section>
         </div>
     </main>
+
+    <!-- Модальное окно для изменения аватарки (только для собственного профиля) -->
+    <?php if ($isOwnProfile): ?>
+    <div id="avatarModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>📷 Изменить аватар</h3>
+                <button type="button" class="modal-close" onclick="closeAvatarModal()">&times;</button>
+            </div>
+
+            <form method="POST" enctype="multipart/form-data" class="avatar-form">
+                <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+                <input type="hidden" name="upload_avatar" value="1">
+
+                <div class="avatar-preview-section">
+                    <div class="current-avatar">
+                        <h4>Текущий аватар:</h4>
+                        <div class="avatar-preview-current">
+                            <?php if ($currentUser['avatar'] && file_exists($currentUser['avatar'])): ?>
+                                <img src="<?php echo h($currentUser['avatar']); ?>" alt="Текущий аватар" />
+                            <?php else: ?>
+                                <div class="avatar-placeholder">
+                                    <?php echo strtoupper(substr($currentUser['username'], 0, 1)); ?>
+                                </div>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+
+                    <div class="new-avatar">
+                        <h4>Новый аватар:</h4>
+                        <div class="avatar-preview-new" id="avatarPreview">
+                            <div class="avatar-placeholder">Выберите файл</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="avatar">Выберите изображение:</label>
+                    <input type="file" id="avatar" name="avatar" accept="image/*" required onchange="previewAvatar(this)">
+                    <small class="form-help">
+                        Форматы: JPEG, PNG, GIF, WebP<br>
+                        Максимальный размер: 5MB
+                    </small>
+                </div>
+
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeAvatarModal()">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Сохранить аватар</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <?php endif; ?>
 
     <footer class="footer">
         <div class="container">
@@ -1247,6 +1733,86 @@ $userComments = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 }, 300);
             }, 3000);
         }
+
+        <?php if ($isOwnProfile): ?>
+        // Функции для работы с модальным окном аватарки
+        function openAvatarModal() {
+            const modal = document.getElementById('avatarModal');
+            if (modal) {
+                modal.style.display = 'block';
+                document.body.style.overflow = 'hidden';
+            }
+        }
+
+        function closeAvatarModal() {
+            const modal = document.getElementById('avatarModal');
+            if (modal) {
+                modal.style.display = 'none';
+                document.body.style.overflow = '';
+
+                // Сбрасываем предпросмотр
+                const preview = document.getElementById('avatarPreview');
+                const fileInput = document.getElementById('avatar');
+                if (preview && fileInput) {
+                    preview.innerHTML = '<div class="avatar-placeholder">Выберите файл</div>';
+                    fileInput.value = '';
+                }
+            }
+        }
+
+        // Функция для предпросмотра аватарки
+        function previewAvatar(input) {
+            const preview = document.getElementById('avatarPreview');
+            if (!preview) return;
+
+            if (input.files && input.files[0]) {
+                const file = input.files[0];
+
+                // Проверяем размер файла (5MB)
+                if (file.size > 5 * 1024 * 1024) {
+                    showToast('Файл слишком большой. Максимальный размер: 5MB', 'error');
+                    input.value = '';
+                    preview.innerHTML = '<div class="avatar-placeholder">Выберите файл</div>';
+                    return;
+                }
+
+                // Проверяем тип файла
+                const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+                if (!allowedTypes.includes(file.type)) {
+                    showToast('Недопустимый тип файла. Разрешены: JPEG, PNG, GIF, WebP', 'error');
+                    input.value = '';
+                    preview.innerHTML = '<div class="avatar-placeholder">Выберите файл</div>';
+                    return;
+                }
+
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    preview.innerHTML = `<img src="${e.target.result}" alt="Предпросмотр нового аватара">`;
+                };
+                reader.readAsDataURL(file);
+            } else {
+                preview.innerHTML = '<div class="avatar-placeholder">Выберите файл</div>';
+            }
+        }
+
+        // Закрытие модального окна при клике вне его
+        window.onclick = function(event) {
+            const modal = document.getElementById('avatarModal');
+            if (event.target === modal) {
+                closeAvatarModal();
+            }
+        }
+
+        // Закрытие модального окна по Escape
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                const modal = document.getElementById('avatarModal');
+                if (modal && modal.style.display === 'block') {
+                    closeAvatarModal();
+                }
+            }
+        });
+        <?php endif; ?>
 
         <?php if ($isOwnProfile): ?>
         // Переопределяем функцию инициализации карточек для добавления drag-and-drop
