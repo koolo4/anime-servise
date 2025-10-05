@@ -1,6 +1,4 @@
 -- Полная база данных для аниме сервиса (обновленная версия)
-DROP DATABASE IF EXISTS anime_service;
-CREATE DATABASE anime_service;
 USE anime_service;
 
 -- Таблица пользователей

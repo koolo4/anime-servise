@@ -1,6 +1,19 @@
 <?php
 require_once 'config.php';
 
+/*
+ * ВАЖНО: Для загрузки файлов размером до 1GB необходимо настроить PHP:
+ *
+ * В php.ini или .htaccess установите:
+ * upload_max_filesize = 1024M
+ * post_max_size = 1024M
+ * max_execution_time = 300
+ * max_input_time = 300
+ * memory_limit = 512M
+ *
+ * Файл .htaccess с этими настройками уже создан в папке uploads/
+ */
+
 // Проверяем права администратора
 requireAdmin();
 
@@ -51,7 +64,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $trailer_url = trim($_POST['trailer_url']);
             } elseif ($trailer_method === 'upload' && isset($_FILES['trailer_file']) && $_FILES['trailer_file']['error'] === UPLOAD_ERR_OK) {
                 $allowedTypes = ['video/mp4', 'video/webm', 'video/avi'];
-                $maxSize = 100 * 1024 * 1024; // 100MB
+                $maxSize = 1024 * 1024 * 1024; // 1GB (1024MB)
                 $fileType = $_FILES['trailer_file']['type'];
                 $fileSize = $_FILES['trailer_file']['size'];
                 $fileTmp = $_FILES['trailer_file']['tmp_name'];
@@ -60,7 +73,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 if (!in_array($fileType, $allowedTypes)) {
                     $error = 'Неподдерживаемый формат видео. Разрешены: MP4, WebM, AVI';
                 } elseif ($fileSize > $maxSize) {
-                    $error = 'Файл слишком большой. Максимальный размер: 100MB';
+                    $error = 'Файл слишком большой. Максимальный размер: 1GB';
                 } else {
                     $uploadDir = 'uploads/trailers/';
                     if (!is_dir($uploadDir)) {
@@ -374,7 +387,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                         </div>
                         <div id="trailer_file_block" style="margin-top: 10px;<?php if (!($anime['trailer_url'] && strpos($anime['trailer_url'], 'uploads/trailers/') === 0)) echo 'display:none;'; ?>">
                             <input type="file" name="trailer_file" id="trailer_file" accept="video/mp4,video/webm,video/avi">
-                            <small class="form-hint">Максимальный размер: 100MB. Разрешены: MP4, WebM, AVI</small>
+                            <small class="form-hint">Максимальный размер: 1GB. Разрешены: MP4, WebM, AVI</small>
                             <?php if ($anime['trailer_url'] && strpos($anime['trailer_url'], 'uploads/trailers/') === 0): ?>
                                 <div style="margin-top: 8px;">
                                     <video src="<?php echo h($anime['trailer_url']); ?>" controls style="max-width: 320px; max-height: 180px;"></video>
