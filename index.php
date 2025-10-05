@@ -102,6 +102,110 @@ if (!empty($queryParams)) {
     $topAnime = $pdo->query($fullQuery)->fetchAll(PDO::FETCH_ASSOC);
 }
 
+// Получаем статистику сайта
+$statsQuery = "
+    SELECT
+        (SELECT COUNT(*) FROM anime) as total_anime,
+        (SELECT COUNT(*) FROM users) as total_users,
+        (SELECT COUNT(*) FROM ratings) as total_ratings,
+        (SELECT COUNT(*) FROM comments) as total_comments
+";
+$siteStats = $pdo->query($statsQuery)->fetch(PDO::FETCH_ASSOC);
+
+// Получаем топ-5 аниме по рейтингу (отдельно от основного списка)
+$topRatedQuery = "
+    SELECT a.*, AVG(r.overall_rating) as avg_rating, COUNT(r.overall_rating) as rating_count
+    FROM anime a
+    JOIN ratings r ON a.id = r.anime_id
+    GROUP BY a.id
+    HAVING rating_count >= 2
+    ORDER BY avg_rating DESC, rating_count DESC
+    LIMIT 5
+";
+$topRatedAnime = $pdo->query($topRatedQuery)->fetchAll(PDO::FETCH_ASSOC);
+
+
+
+// Получаем популярные жанры
+$popularGenresQuery = "
+    SELECT
+        TRIM(SUBSTRING_INDEX(SUBSTRING_INDEX(a.genre, ',', numbers.n), ',', -1)) as genre,
+        COUNT(*) as count,
+        AVG(r.overall_rating) as avg_rating
+    FROM anime a
+    CROSS JOIN (
+        SELECT 1 n UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
+        UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8
+    ) numbers
+    LEFT JOIN ratings r ON a.id = r.anime_id
+    WHERE CHAR_LENGTH(a.genre) - CHAR_LENGTH(REPLACE(a.genre, ',', '')) >= numbers.n - 1
+    GROUP BY genre
+    HAVING count >= 2
+    ORDER BY count DESC, avg_rating DESC
+    LIMIT 12
+";
+$popularGenres = $pdo->query($popularGenresQuery)->fetchAll(PDO::FETCH_ASSOC);
+
+// Получаем персональные рекомендации для авторизованных пользователей
+$currentUser = getCurrentUser();
+$recommendations = [];
+
+if ($currentUser) {
+    // Получаем жанры, которые пользователь оценивал высоко
+    $userPreferencesQuery = "
+        SELECT
+            TRIM(SUBSTRING_INDEX(SUBSTRING_INDEX(a.genre, ',', numbers.n), ',', -1)) as genre,
+            AVG(r.overall_rating) as avg_user_rating,
+            COUNT(*) as count
+        FROM anime a
+        JOIN ratings r ON a.id = r.anime_id
+        CROSS JOIN (
+            SELECT 1 n UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
+            UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8
+        ) numbers
+        WHERE r.user_id = ?
+        AND CHAR_LENGTH(a.genre) - CHAR_LENGTH(REPLACE(a.genre, ',', '')) >= numbers.n - 1
+        AND r.overall_rating >= 7
+        GROUP BY genre
+        ORDER BY avg_user_rating DESC, count DESC
+        LIMIT 3
+    ";
+
+    $stmt = $pdo->prepare($userPreferencesQuery);
+    $stmt->execute([$currentUser['id']]);
+    $preferredGenres = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if ($preferredGenres) {
+        $genreList = array_map(function($g) { return "'" . addslashes($g['genre']) . "'"; }, $preferredGenres);
+        $genreListStr = implode(',', $genreList);
+
+        // Получаем рекомендации на основе предпочтений
+        $recommendationsQuery = "
+            SELECT DISTINCT a.*, AVG(r.overall_rating) as avg_rating, COUNT(r.overall_rating) as rating_count
+            FROM anime a
+            LEFT JOIN ratings r ON a.id = r.anime_id
+            LEFT JOIN ratings ur ON a.id = ur.anime_id AND ur.user_id = ?
+            WHERE ur.user_id IS NULL
+            AND (
+                " . implode(' OR ', array_fill(0, count($preferredGenres), 'a.genre LIKE ?')) . "
+            )
+            GROUP BY a.id
+            HAVING avg_rating >= 6.5 OR rating_count = 0
+            ORDER BY avg_rating DESC, rating_count DESC
+            LIMIT 6
+        ";
+
+        $recommendationParams = [$currentUser['id']];
+        foreach ($preferredGenres as $genre) {
+            $recommendationParams[] = '%' . $genre['genre'] . '%';
+        }
+
+        $stmt = $pdo->prepare($recommendationsQuery);
+        $stmt->execute($recommendationParams);
+        $recommendations = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+}
+
 // Получаем последние комментарии
 $latestCommentsQuery = "
     SELECT c.*, u.username, u.avatar, u.id as user_id, a.title as anime_title
@@ -112,8 +216,6 @@ $latestCommentsQuery = "
     LIMIT 5
 ";
 $latestComments = $pdo->query($latestCommentsQuery)->fetchAll(PDO::FETCH_ASSOC);
-
-$currentUser = getCurrentUser();
 ?>
 <!DOCTYPE html>
 <html lang="ru">
@@ -298,6 +400,120 @@ $currentUser = getCurrentUser();
                 <h2>Добро пожаловать в мир аниме!</h2>
                 <p>Открывайте новые аниме, делитесь мнениями и находите единомышленников</p>
             </section>
+
+            <!-- Статистика сайта -->
+            <section class="site-stats">
+                <h2>📊 Статистика сайта</h2>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon">🎬</div>
+                        <div class="stat-content">
+                            <div class="stat-number"><?php echo number_format($siteStats['total_anime']); ?></div>
+                            <div class="stat-label">Аниме в каталоге</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">👥</div>
+                        <div class="stat-content">
+                            <div class="stat-number"><?php echo number_format($siteStats['total_users']); ?></div>
+                            <div class="stat-label">Пользователей</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">⭐</div>
+                        <div class="stat-content">
+                            <div class="stat-number"><?php echo number_format($siteStats['total_ratings']); ?></div>
+                            <div class="stat-label">Оценок</div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">💬</div>
+                        <div class="stat-content">
+                            <div class="stat-number"><?php echo number_format($siteStats['total_comments']); ?></div>
+                            <div class="stat-label">Комментариев</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Топ аниме по рейтингу -->
+            <?php if ($topRatedAnime): ?>
+            <section class="top-rated-anime">
+                <h2>🏆 Топ аниме по рейтингу</h2>
+                <div class="top-anime-list">
+                    <?php foreach ($topRatedAnime as $index => $anime): ?>
+                        <div class="top-anime-item" data-anime-id="<?php echo $anime['id']; ?>">
+                            <div class="rank-badge">#<?php echo $index + 1; ?></div>
+                            <div class="anime-poster">
+                                <?php if ($anime['image_url']): ?>
+                                    <img src="<?php echo h($anime['image_url']); ?>" alt="<?php echo h($anime['title']); ?>">
+                                <?php else: ?>
+                                    <div class="anime-placeholder">🎌</div>
+                                <?php endif; ?>
+                            </div>
+                            <div class="anime-details">
+                                <h3><?php echo h($anime['title']); ?></h3>
+                                <p class="anime-info"><?php echo h($anime['genre']); ?> • <?php echo h($anime['year']); ?></p>
+                                <div class="rating-info">
+                                    <span class="rating-score">⭐ <?php echo round($anime['avg_rating'], 1); ?></span>
+                                    <span class="rating-votes">(<?php echo $anime['rating_count']; ?> оценок)</span>
+                                </div>
+                            </div>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+            </section>
+            <?php endif; ?>
+
+            <!-- Персональные рекомендации для авторизованных пользователей -->
+            <?php if ($currentUser && $recommendations): ?>
+            <section class="recommendations">
+                <h2>🎯 Рекомендации для вас</h2>
+                <p class="recommendations-subtitle">На основе ваших оценок</p>
+                <div class="anime-grid">
+                    <?php foreach ($recommendations as $anime): ?>
+                        <div class="anime-card" data-anime-id="<?php echo $anime['id']; ?>">
+                            <?php if ($anime['image_url']): ?>
+                                <img src="<?php echo h($anime['image_url']); ?>" alt="<?php echo h($anime['title']); ?>" class="anime-image">
+                            <?php else: ?>
+                                <div class="anime-image-placeholder">🎌</div>
+                            <?php endif; ?>
+                            <div class="anime-info">
+                                <h3><?php echo h($anime['title']); ?></h3>
+                                <p class="anime-genre"><?php echo h($anime['genre']); ?> • <?php echo h($anime['year']); ?></p>
+                                <p class="anime-description"><?php echo h(substr($anime['description'], 0, 100)); ?>...</p>
+                                <div class="anime-rating">
+                                    <span class="rating-stars">⭐ <?php echo $anime['avg_rating'] ? round($anime['avg_rating'], 1) : 'Новое'; ?></span>
+                                    <?php if ($anime['rating_count']): ?>
+                                        <span class="rating-count">(<?php echo $anime['rating_count']; ?> оценок)</span>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+            </section>
+            <?php endif; ?>
+
+
+
+            <!-- Популярные жанры -->
+            <?php if ($popularGenres): ?>
+            <section class="popular-genres">
+                <h2>🔥 Популярные жанры</h2>
+                <div class="genres-cloud">
+                    <?php foreach ($popularGenres as $genre): ?>
+                        <a href="?sort=genre&genres[]=<?php echo urlencode($genre['genre']); ?>"
+                           class="genre-tag"
+                           data-count="<?php echo $genre['count']; ?>"
+                           title="<?php echo $genre['count']; ?> аниме, средний рейтинг: <?php echo $genre['avg_rating'] ? round($genre['avg_rating'], 1) : 'не оценено'; ?>">
+                            <?php echo h($genre['genre']); ?>
+                            <span class="genre-count"><?php echo $genre['count']; ?></span>
+                        </a>
+                    <?php endforeach; ?>
+                </div>
+            </section>
+            <?php endif; ?>
 
             <section class="top-anime">
                 <div class="anime-header">
@@ -749,7 +965,7 @@ $currentUser = getCurrentUser();
             }
 
             // Обработка кликов по карточкам аниме
-            document.querySelectorAll('.anime-card').forEach(card => {
+            document.querySelectorAll('.anime-card, .top-anime-item').forEach(card => {
                 card.addEventListener('click', function() {
                     const animeId = this.getAttribute('data-anime-id');
                     if (animeId) {
