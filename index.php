@@ -322,10 +322,6 @@ $currentUser = getCurrentUser();
                                     </button>
                                     <div class="multiselect-dropdown" id="genreDropdown" style="display: none;">
                                         <input type="text" class="multiselect-search" placeholder="🔍 Поиск жанров..." id="genreSearch">
-                                        <div class="multiselect-option select-all" data-value="all">
-                                            <div class="multiselect-checkbox"></div>
-                                            <span class="multiselect-label">Выбрать все</span>
-                                        </div>
                                         <div class="multiselect-option select-all" data-value="none">
                                             <div class="multiselect-checkbox"></div>
                                             <span class="multiselect-label">Очистить всё</span>
@@ -502,10 +498,8 @@ $currentUser = getCurrentUser();
             const allOptions = dropdown.querySelectorAll('.multiselect-option');
             const options = Array.from(allOptions).filter(option =>
                 !option.classList.contains('select-all') &&
-                option.dataset.value !== 'all' &&
                 option.dataset.value !== 'none'
             );
-            const selectAllOption = dropdown.querySelector('[data-value="all"]');
             const clearAllOption = dropdown.querySelector('[data-value="none"]');
 
             let isOpen = false;
@@ -590,7 +584,6 @@ $currentUser = getCurrentUser();
                     });
 
                     // Показываем служебные опции
-                    if (selectAllOption) selectAllOption.style.display = 'flex';
                     if (clearAllOption) clearAllOption.style.display = 'flex';
 
                     // Скрываем сообщение "Ничего не найдено"
@@ -602,7 +595,6 @@ $currentUser = getCurrentUser();
                 }
 
                 // Всегда показываем служебные опции
-                if (selectAllOption) selectAllOption.style.display = 'flex';
                 if (clearAllOption) clearAllOption.style.display = 'flex';
 
                 // Фильтруем только обычные опции жанров
@@ -634,17 +626,6 @@ $currentUser = getCurrentUser();
                 }
             }
 
-            // Выбрать все жанры
-            function selectAll() {
-                const visibleOptions = options.filter(option =>
-                    option.style.display !== 'none'
-                );
-
-                visibleOptions.forEach(option => {
-                    option.classList.add('selected');
-                });
-                updateButtonText();
-            }
 
             // Очистить все выбранные жанры
             function clearAll() {
@@ -672,14 +653,7 @@ $currentUser = getCurrentUser();
                 });
             });
 
-            // Обработчики для "Выбрать все" и "Очистить всё"
-            selectAllOption.addEventListener('click', function(e) {
-                e.stopPropagation();
-                selectAll();
-                // Автоматически отправляем форму при выборе всех жанров
-                document.getElementById('filterForm').submit();
-            });
-
+            // Обработчик для "Очистить всё"
             clearAllOption.addEventListener('click', function(e) {
                 e.stopPropagation();
                 clearAll();
